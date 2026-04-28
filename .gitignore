@@ -1,0 +1,83 @@
+# ── Large Data Files ──────────────────────────────────────────────
+*.mat
+*.csv
+*.edf
+*.fdt
+*.set
+*.npz
+
+# ── Trained Models ────────────────────────────────────────────────
+*.pth
+*.pt
+*.ckpt
+
+# ── Generated / Intermediate Data ─────────────────────────────────
+*.npy
+*.pkl
+
+# ── Generated Images / Results ────────────────────────────────────
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.html
+*.key
+
+# ── Binary / Feature Directories (contain .npy outputs) ───────────
+binary_0_vs_1_feature/
+binary_0_vs_2_feature/
+binary_0_vs_3_feature/
+binary_1_vs_2_feature/
+binary_1_vs_3_feature/
+binary_2_vs_3_feature/
+binary_label_0_vs_1/
+binary_label_0_vs_2/
+binary_label_0_vs_3/
+binary_label_1_vs_2/
+binary_label_1_vs_3/
+binary_label_2_vs_3/
+
+# ── Raw / Processed Data Dirs ──────────────────────────────────────
+BCI_Kaggle/
+BCICIV_2a_gdf/
+Filt/
+Filtered/
+filtered/
+filtered_Artifacts_removed/
+unfiltered/
+unfiltered_Artifacts_removed/
+filt_features/
+data_EEGMASTER/
+explanation_data/
+explanation_data_subject_*/
+results/
+hyperparameter_results/
+Topo_Avg/
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+
+# ── macOS ──────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDE ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Pencil / Other editor files ────────────────────────────────────
+.cph/
