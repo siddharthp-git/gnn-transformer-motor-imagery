@@ -1,65 +1,26 @@
-# ── Large Data Files ──────────────────────────────────────────────
+# ── Raw Dataset Files (too large / proprietary) ────────────────────
 *.mat
-*.csv
 *.edf
 *.fdt
 *.set
-*.npz
+*.csv
 
-# ── Trained Models ────────────────────────────────────────────────
-*.pth
-*.pt
-*.ckpt
-
-# ── Generated / Intermediate Data ─────────────────────────────────
-*.npy
-*.pkl
-
-# ── Generated Images / Results ────────────────────────────────────
-*.png
-*.jpg
-*.jpeg
-*.pdf
-*.html
+# ── Keynote / Presentation files ───────────────────────────────────
 *.key
 
-# ── Binary / Feature Directories (contain .npy outputs) ───────────
-binary_0_vs_1_feature/
-binary_0_vs_2_feature/
-binary_0_vs_3_feature/
-binary_1_vs_2_feature/
-binary_1_vs_3_feature/
-binary_2_vs_3_feature/
-binary_label_0_vs_1/
-binary_label_0_vs_2/
-binary_label_0_vs_3/
-binary_label_1_vs_2/
-binary_label_1_vs_3/
-binary_label_2_vs_3/
+# ── Trained Models (large, reproducible by running training) ───────
+# Kept: binary_label_*/subject_*/model.pth  ← uncomment below to exclude
+# *.pth
 
-# ── Raw / Processed Data Dirs ──────────────────────────────────────
-BCI_Kaggle/
-BCICIV_2a_gdf/
-Filt/
-Filtered/
-filtered/
-filtered_Artifacts_removed/
-unfiltered/
-unfiltered_Artifacts_removed/
-filt_features/
-data_EEGMASTER/
-explanation_data/
-explanation_data_subject_*/
-results/
-hyperparameter_results/
-Topo_Avg/
+# ── macOS ──────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
 
 # ── Python ─────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
 .venv/
 venv/
 env/
@@ -68,16 +29,85 @@ dist/
 build/
 .ipynb_checkpoints/
 
-# ── macOS ──────────────────────────────────────────────────────────
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# ── IDE ────────────────────────────────────────────────────────────
+# ── IDE / Editor ───────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# ── Pencil / Other editor files ────────────────────────────────────
 .cph/
+
+# ══════════════════════════════════════════════════════════════════
+# NOT part of the pipeline — excluded explicitly
+# ══════════════════════════════════════════════════════════════════
+
+# Third-party / reference code (not written by us)
+GCN_for_EEG-master/
+
+# ── NOT part of the final GNN training pipeline ────────────────────
+# These preprocess steps (filter/ICA) were NOT used by the GNN —
+# the GNN loads raw BCI_Kaggle/ data and filters internally (8-30Hz).
+Final_Pipeline/2.ICA.m
+Final_Pipeline/3.Exract_Filt_Data.py
+Final_Pipeline/4.Feature_Extraction.m
+Final_Pipeline/4.Feature_Ranking.py
+Final_Pipeline/5.Feature_Ranking.m
+Final_Pipeline/6.Ranked_Feature_Training.ipynb
+Final_Pipeline/6.model_training.py
+
+# Legacy scripts (superseded by current pipeline scripts)
+extract_cheb_features.py
+perform_statistical_tests.py
+visualize_trial.py
+
+# Old / scratch notebooks
+"BCI Updated[Working].ipynb"
+BCI+CNN.ipynb
+BCI+Coherency.ipynb
+BCI.ipynb
+DeepEEGGCN.ipynb
+Updated\ Multigcn.ipynb
+ffgcn.ipynb
+self_gcn.ipynb
+tester.ipynb
+data_loader.ipynb
+Train.ipynb
+Ranked_Feature_Training.ipynb
+GNN+Visual.ipynb
+GNNexplainer.ipynb
+
+# Old / scratch Python scripts
+self.py
+google+gcn.py
+"MultiGCN (1).py"
+MultiGCN.py
+EMBC_GaussNoise_GCN.py
+extract_notebook.py
+extracted_code.py
+
+# Supplementary / external materials
+Project\ Materials\ For\ Abdulrazaq\ Sanni/
+Research\ Papers/
+
+# Raw EEG files
+S001R01.edf
+S001R02.edf
+S001R03.edf
+S001R04.edf
+Epoch_ICA-4
+sub07-ICA-4.fdt
+sub07-ICA-4.set
+standard_1010.tsv.txt
+
+# Unrelated data dirs
+BCI_Kaggle/
+BCICIV_2a_gdf/
+Filt/
+Filtered/
+filtered/
+unfiltered/
+unfiltered_Artifacts_removed/
+filt_features/
+data_EEGMASTER/
+GCN_for_EEG-master/
+hyperparameter_results/
+Topo_Avg/
