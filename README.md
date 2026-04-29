@@ -24,43 +24,43 @@ A complete pipeline for classifying **Motor Imagery EEG signals** (BCI Competiti
 - **Goal**: Train a GNN to binary-classify pairs of motor imagery tasks (e.g., Left Hand vs Right Hand), then identify *which* EEG channels (nodes) and *which* inter-channel connections (edges) most significantly drive classification.
 - **Dataset**: BCI Competition IV 2a — 9 subjects, 4 motor imagery classes (Left Hand=0, Right Hand=1, Both Feet=2, Tongue=3), 22 EEG channels, 250 Hz sampling rate.
 - **Strategy**: Leave-One-Subject-Out (LOSO) cross-validation over all 6 pairwise class combinations.
+- **Data path**: The GNN loads directly from `BCI_Kaggle/` (`.mat` files) and applies an internal **8–30 Hz Butterworth bandpass filter** — no external preprocessing step is required.
 
 ---
 
 ## 2. Repository Structure
 
 ```
-Brainconnectivity/
+gnn-transformer-motor-imagery/
 │
-├── Final_Pipeline/                  # Preprocessing scripts (run first)
-│   ├── 1.data_filter.py
-│   └── 2.ICA.m
+├── BCI_Kaggle/                      # Raw data (A01T.mat … A09T.mat, A01E.mat … A09E.mat)
+│                                    # ← NOT committed (too large). Download separately.
 │
-├── BCI_Kaggle/                      # Raw data in .mat format (A01T.mat … A09T.mat, A01E.mat … A09E.mat)
+├── Final_Pipeline/
+│   └── 1.data_filter.py             # Reference script: original GDF → .mat conversion
 │
-├── experiment_with_logging.py       # ★ Main training script
-├── extract_all_features.py          # ★ Post-training feature extraction
-├── extract_cheb_features.py         # Legacy: ChebConv-only extraction for pair 0v1
-├── perform_stats_all_pairs.py       # ★ Statistical tests (all pairs, all layers)
-├── perform_statistical_tests.py     # Legacy: Stats for a single pair (hardcoded)
-├── analyze_wilcoxon.py              # Interactive Wilcoxon analysis CLI
-├── report_significant_features.py   # Summary report of significant features
+├── experiment_with_logging.py       # ★ Main: model definition + LOSO training
+├── extract_all_features.py          # ★ Post-training node/edge feature extraction
+├── perform_stats_all_pairs.py       # ★ Statistical tests (T-test + Wilcoxon, all pairs)
+├── analyze_wilcoxon.py              # Interactive Wilcoxon CLI inspector
+├── report_significant_features.py   # Summary report across all pairs & layers
 │
 ├── plot_feature_topomaps.py         # ★ Average connectivity topoplot
-├── plot_significant_topomaps.py     # ★ Significant + Difference connectivity topoplot
-├── visualize_from_pickle.py         # Topoplot from GNNExplainer pickle file
-├── save_explanations.py             # Run GNNExplainer and save results to pickle
-├── calculate_kappa_from_explanations.py  # Cohen's Kappa from explanation pickle files
+├── plot_significant_topomaps.py     # ★ Significance-filtered + difference topoplot
+├── save_explanations.py             # Run GNNExplainer → save masks to .pkl
+├── visualize_from_pickle.py         # Topoplot from GNNExplainer .pkl file
+├── calculate_kappa_from_explanations.py  # Cohen's Kappa from explanation pickles
 │
 ├── inspect_npy.py                   # Utility: inspect any .npy file's shape/stats
-├── open_pickle.py                   # Utility: print contents of a pickle file
+├── open_pickle.py                   # Utility: print contents of a .pkl file
 │
-├── binary_label_{c1}_vs_{c2}/       # Per-pair trained models (one folder per pair)
+├── binary_label_{c1}_vs_{c2}/       # Per-pair trained models (LOSO, one per subject)
 │   └── subject_{N}/
-│       └── model.pth
+│       ├── model.pth
+│       └── explanation_trial_*.pkl  # GNNExplainer outputs per trial
 │
-├── binary_{c1}_vs_{c2}_feature/     # Per-pair extracted features & stats
-│   ├── class{c}_avg_edges.npy       # Averaged edge weights (spectral coherence)
+├── binary_{c1}_vs_{c2}_feature/     # Per-pair extracted features & statistics
+│   ├── class{c}_avg_edges.npy       # Averaged spectral coherence edge weights (231,)
 │   └── {graph|cheb|sage}/
 │       ├── class{c}_correct.npy     # Node features (22×16×N_trials)
 │       ├── p_values.npy             # T-test p-values (22×16)
@@ -69,83 +69,68 @@ Brainconnectivity/
 │       ├── wilcoxon_p_values.npy    # Wilcoxon p-values (22×16)
 │       ├── wilcoxon_stats.npy       # Wilcoxon z-statistics (22×16)
 │       ├── global_p_values.npy      # Node-averaged T-test p-values (16,)
-│       ├── global_t_stats.npy       # Node-averaged T-statistics (16,)
 │       ├── global_wilcoxon_p_values.npy
-│       ├── global_wilcoxon_stats.npy
 │       └── *.png                    # Generated topoplot images
 │
-└── explanation_data*/               # GNNExplainer pickles (optional)
+├── results/
+│   ├── log.txt                      # Training log
+│   └── best_models.txt              # Best model summary per pair
+│
+└── loso_*.png                       # LOSO learning curves + overall performance
 ```
 
 ---
 
 ## 3. File Reference — What Each File Does
 
-### Preprocessing
+### Data Reference
 
 #### `Final_Pipeline/1.data_filter.py`
-- **Input**: Raw `.gdf` files from `BCICIV_2a_gdf/` (subjects A01T–A09T).
-- **What it does**:
-  1. Loads raw GDF with MNE, drops EOG channels.
-  2. Renames EEG channels to standard 10-20 names (e.g., `EEG-Fz` → `Fz`).
-  3. Sets average EEG reference and standard 10-20 montage.
-  4. Extracts motor imagery epochs (`769`=Left, `770`=Right), window `−1.5 s` to `6 s`.
-  5. Applies baseline correction (`−1.5 s` to `0 s`).
-  6. Crops to `3 s – 6 s` (active motor imagery window).
-  7. Applies **50 Hz notch filter** (spectrum_fit method).
-  8. Applies **0.5–48 Hz 5th-order Butterworth bandpass filter**.
-- **Output**: `Filtered/filtered_data_subA0{i}T.mat` — filtered epoched data per subject.
+Reference script showing how the original BCI Competition IV `.gdf` files were converted to `.mat` format. Applies notch filtering (50 Hz) and Butterworth bandpass (0.5–48 Hz), then saves per-subject `.mat` files.
 
-#### `Final_Pipeline/2.ICA.m` *(MATLAB / EEGLAB)*
-- **Input**: Filtered `.mat` files from step 1.
-- **What it does**: Runs **Independent Component Analysis (ICA)** using EEGLAB to identify and remove ocular/muscular artifact components.
-- **Output**: Cleaned data in `filtered_Artifacts_removed/` — this is the data loaded by the GNN training pipeline.
-
-> **Note**: Steps 1 and 2 must be completed before any Python training scripts are run.
+> **Note**: The GNN training pipeline does **not** use these files. It loads `BCI_Kaggle/*.mat` directly and applies its own internal 8–30 Hz bandpass.
 
 ---
 
 ### Training & Inference
 
 #### `experiment_with_logging.py` ⭐
-The **core module** of the entire pipeline. Contains:
+The **core module** of the entire pipeline. Contains all model and data code.
 
 | Class / Function | Description |
 |---|---|
-| `bandpass_filter(data, ...)` | 4th-order Butterworth bandpass (8–30 Hz) — applied inside `load_BCI2a_data` |
-| `compute_spectral_coherence(data)` | Computes mean-squared coherence between all channel pairs using Welch's method. Returns shape `(N_trials, 231)` |
-| `load_BCI2a_data(path, subject, training)` | Loads `.mat` files from `BCI_Kaggle/`, filters to 22 channels, applies bandpass, windows `2 s – 6 s`. Returns `(data, labels)` |
-| `EEGGraphDataset` | PyTorch Geometric `Dataset`. Converts `(N_trials, 22, 16)` CSP features + coherence into `Data(x, edge_index, edge_attr, y)` objects |
+| `bandpass_filter(data, ...)` | 4th-order Butterworth 8–30 Hz filter (applied inside `load_BCI2a_data`) |
+| `compute_spectral_coherence(data)` | Welch's method coherence between all channel pairs → shape `(N_trials, 231)` |
+| `load_BCI2a_data(path, subject, training)` | Loads `BCI_Kaggle/*.mat`, selects 22 EEG channels, applies bandpass, windows `2–6 s` |
+| `EEGGraphDataset` | PyTorch Geometric `Dataset`. Converts CSP features + coherence into graph `Data` objects |
 | `GraphConvBlock` | 3-layer GraphConv with LayerNorm + ReLU + Global Mean Pool |
 | `ChebConvBlock` | 3-layer ChebConv (K=3) with LayerNorm + ReLU + Global Mean Pool |
 | `SAGEConvBlock` | 3-layer SAGEConv with LayerNorm + ReLU + Global Mean Pool |
-| `TransformerBlock` | Standard `nn.TransformerEncoder` for cross-branch attention |
-| `GraphTransformerNet` | Full model: 3 parallel GNN branches → Concat → Transformer → MLP |
-| `train_model(...)` | One epoch of training with BCEWithLogitsLoss + Adam |
-| `evaluate_model(...)` | Evaluation loop returning accuracy, kappa, features |
-| `extract_trial_explanation(...)` | Runs GNNExplainer on a single trial |
+| `GraphTransformerNet` | Full model: 3 parallel GNN branches → concat → TransformerEncoder → MLP |
+| `train_model(...)` | One training epoch — BCEWithLogitsLoss + Adam |
+| `evaluate_model(...)` | Evaluation loop returning accuracy, kappa, and features |
 
-**Usage (training)**:
+**Run training** (one pair at a time):
 ```bash
 python3 experiment_with_logging.py --c1 0 --c2 1
 ```
-Saves trained models to `binary_label_{c1}_vs_{c2}/subject_{N}/model.pth`.
+Saves models to `binary_label_{c1}_vs_{c2}/subject_{N}/model.pth`.
 
 ---
 
 ### Feature Extraction
 
 #### `extract_all_features.py` ⭐
-- **Depends on**: Trained models in `binary_label_{c1}_vs_{c2}/`.
+- **Depends on**: trained models in `binary_label_{c1}_vs_{c2}/`
 - **What it does**:
-  1. Iterates over all 6 class pairs and all 9 subjects (LOSO).
-  2. Replicates the exact training-time CSP fit on training subjects, transforms the test subject.
-  3. Runs each test trial through the trained model with `return_node_feats=True`.
-  4. For **correctly classified** trials only, extracts node-level features from each GNN branch:
-     - `graph`: indices `0:16` of the 48-dim node feature vector
+  1. Iterates all 6 class pairs × 9 subjects (LOSO).
+  2. Replicates training-time CSP fit on training subjects, transforms test subject.
+  3. Runs each test trial through the trained model.
+  4. For **correctly classified trials only**, extracts node features from each GNN branch:
+     - `graph`: feature vector indices `0:16`
      - `cheb`: indices `16:32`
      - `sage`: indices `32:48`
-  5. Averages and saves spectral coherence edge weights per class.
+  5. Saves class-averaged spectral coherence edge weights.
 - **Output**:
   - `binary_{c1}_vs_{c2}_feature/{layer}/class{c}_correct.npy` — shape `(22, 16, N_trials)`
   - `binary_{c1}_vs_{c2}_feature/class{c}_avg_edges.npy` — shape `(231,)`
@@ -154,62 +139,46 @@ Saves trained models to `binary_label_{c1}_vs_{c2}/subject_{N}/model.pth`.
 python3 extract_all_features.py
 ```
 
-#### `extract_cheb_features.py`
-- **Legacy script**: Extracts ChebConv features for pair `0 vs 1` only (hardcoded).
-- Superseded by `extract_all_features.py`. Kept for reference.
-- Saves to `binary_label_0_vs_1/cheb_features_class{0|1}_correct.npy`.
-
 ---
 
 ### Statistical Analysis
 
 #### `perform_stats_all_pairs.py` ⭐
-- **Depends on**: `binary_{c1}_vs_{c2}_feature/{layer}/class{c}_correct.npy`
-- **What it does**: For every (pair × layer) combination:
-  1. **Node-wise analysis**: Welch's T-test + Wilcoxon Rank-Sum test on each of the `22 nodes × 16 features` → `(22, 16)` p-value matrices.
-  2. **Global analysis**: Same tests on node-averaged features → `(16,)` p-value vectors.
-- **Output** (saved into each `layer_dir`):
+For every (pair × layer) combination:
+1. **Node-wise**: Welch's T-test + Wilcoxon Rank-Sum on each `22 nodes × 16 features` → `(22, 16)` matrices.
+2. **Global**: Same tests on node-averaged features → `(16,)` vectors.
 
-  | File | Shape | Contents |
-  |---|---|---|
-  | `p_values.npy` | (22, 16) | T-test p-values |
-  | `t_stats.npy` | (22, 16) | T-statistics |
-  | `mean_diff.npy` | (22, 16) | Class1 − Class2 mean difference |
-  | `wilcoxon_p_values.npy` | (22, 16) | Wilcoxon p-values |
-  | `wilcoxon_stats.npy` | (22, 16) | Wilcoxon z-statistics |
-  | `global_p_values.npy` | (16,) | Node-averaged T-test p-values |
-  | `global_t_stats.npy` | (16,) | Node-averaged T-statistics |
-  | `global_wilcoxon_p_values.npy` | (16,) | Node-averaged Wilcoxon p-values |
-  | `global_wilcoxon_stats.npy` | (16,) | Node-averaged Wilcoxon z-stats |
+| Output file | Shape | Contents |
+|---|---|---|
+| `p_values.npy` | (22, 16) | T-test p-values |
+| `t_stats.npy` | (22, 16) | T-statistics |
+| `mean_diff.npy` | (22, 16) | Class1 − Class2 mean difference |
+| `wilcoxon_p_values.npy` | (22, 16) | Wilcoxon p-values |
+| `wilcoxon_stats.npy` | (22, 16) | Wilcoxon z-statistics (sign = direction) |
+| `global_p_values.npy` | (16,) | Node-averaged T-test p-values |
+| `global_wilcoxon_p_values.npy` | (16,) | Node-averaged Wilcoxon p-values |
 
 ```bash
 python3 perform_stats_all_pairs.py
 ```
 
-#### `perform_statistical_tests.py`
-- **Legacy script**: Hardcoded for pair `0 vs 1`, loads old-style ChebConv features from `binary_label_0_vs_1/`.
-- Superseded by `perform_stats_all_pairs.py`. Kept for reference/single-pair debugging.
-
 #### `analyze_wilcoxon.py`
-- **Interactive CLI** for inspecting Wilcoxon results for a specific pair and layer.
-- Supports multiple output modes:
+Interactive CLI to inspect Wilcoxon results for a specific pair and layer.
 
-  | Flag | Output |
-  |---|---|
-  | *(default)* | Lists all significant (node, feature) pairs with p-value and direction |
-  | `--show_all` | Full 22×16 p-value matrix |
-  | `--simple` | Per-node minimum p-value |
-  | `--features` | Per-feature maximum p-value |
+| Flag | Output |
+|---|---|
+| *(default)* | All significant (node, feature) pairs with p-value and direction |
+| `--show_all` | Full 22×16 p-value matrix |
+| `--simple` | Per-node minimum p-value |
+| `--features` | Per-feature maximum p-value across nodes |
 
 ```bash
 python3 analyze_wilcoxon.py --c1 0 --c2 1 --layer cheb --alpha 0.05
 python3 analyze_wilcoxon.py --c1 0 --c2 1 --layer cheb --simple
-python3 analyze_wilcoxon.py --c1 0 --c2 1 --layer cheb --features
 ```
 
 #### `report_significant_features.py`
-- Scans **all** pairs and layers and prints a summary table of which (node, feature) combinations are significant (p < 0.05).
-- Useful for a high-level overview of where the model's discrimination power lies.
+Scans all pairs and layers and prints a summary of which (node, feature) combinations are significant (p < 0.05). Useful for a quick high-level overview.
 
 ```bash
 python3 report_significant_features.py
@@ -220,42 +189,34 @@ python3 report_significant_features.py
 ### Visualization
 
 #### `plot_feature_topomaps.py` ⭐
-- **What it does**: Plots the **average connectivity** topomap for each class. All 231 edges are shown (no significance filter). Top 10 nodes by feature value are labelled.
-- **Inputs**: `class{c}_correct.npy` (node features), `class{c}_avg_edges.npy` (edge weights).
-- **Output**: `binary_{c1}_vs_{c2}_feature/{layer}/connectivity_{pair}_{layer}_feat{F}_class{C}.png`
+Plots the **average connectivity** topomap per class. All 231 edges are shown (no significance filter). Top 10 nodes by feature value are labelled.
 
 ```bash
 python3 plot_feature_topomaps.py --c1 0 --c2 1 --layer cheb --feature_idx 11
 ```
 
 #### `plot_significant_topomaps.py` ⭐
-- **What it does**: Generates **two statistically filtered plots** per call:
-  1. **Significant Connectivity**: Shows only the Top 10 nodes by Wilcoxon p-value. Edges drawn only if *both* endpoints are in the Top 10 set.
-  2. **Difference Map**: Shows `Class1 − Class2` for nodes and edges, using a diverging `RdBu_r` colormap. Symmetric color scale centered at zero.
-- **Inputs**: `class{c}_correct.npy`, `class{c}_avg_edges.npy`, `p_values.npy`.
-- **Output**:
-  - `sig_connectivity_{pair}_{layer}_feat{F}_class{C}.png`
-  - `sig_diff_{pair}_{layer}_feat{F}.png`
+Generates two plots per call:
+1. **Significant Connectivity**: Only Top-10 nodes by Wilcoxon p-value; edges only between Top-10 pairs.
+2. **Difference Map**: Class1 − Class2 on nodes and edges using a diverging `RdBu_r` colormap.
 
 ```bash
 python3 plot_significant_topomaps.py --c1 0 --c2 1 --layer cheb --feature_idx 11
 ```
 
-#### `visualize_from_pickle.py`
-- Reads a GNNExplainer output `.pkl` file and plots the node importance and edge mask as a connectivity topomap.
-- Accepts the pickle path as a command-line argument.
-
-```bash
-python3 visualize_from_pickle.py binary_label_0_vs_1/subject_0/explanation_trial_0.pkl
-```
-
 #### `save_explanations.py`
-- Runs `GNNExplainer` (PyG) on individual test trials and saves the resulting node/edge masks to `.pkl` files.
-- Arguments: `--trial_idx N` for a single trial, or `--all_trials` for the full test set.
+Runs `GNNExplainer` (PyG) on individual test trials and saves node/edge masks to `.pkl` files.
 
 ```bash
 python3 save_explanations.py --trial_idx 0 --output_dir explanation_data
 python3 save_explanations.py --all_trials --output_dir explanation_data
+```
+
+#### `visualize_from_pickle.py`
+Reads a GNNExplainer `.pkl` file and plots the node importance and edge mask as a connectivity topomap.
+
+```bash
+python3 visualize_from_pickle.py binary_label_0_vs_1/subject_0/explanation_trial_0.pkl
 ```
 
 ---
@@ -263,20 +224,16 @@ python3 save_explanations.py --all_trials --output_dir explanation_data
 ### Utilities
 
 #### `inspect_npy.py`
-- Quick utility to print the **shape, dtype, min, max, mean** of any `.npy` file.
-- Accepts path as command-line argument or edit the hardcoded path at the top.
-
+Prints shape, dtype, min, max, mean of any `.npy` file.
 ```bash
 python3 inspect_npy.py binary_0_vs_1_feature/cheb/p_values.npy
 ```
 
 #### `open_pickle.py`
-- Prints the raw contents of a `.pkl` file. Useful for inspecting GNNExplainer outputs.
+Prints raw contents of a `.pkl` file.
 
 #### `calculate_kappa_from_explanations.py`
-- Reads all `explanation_trial_*.pkl` files in a subject directory and computes **Cohen's Kappa** from the saved `predicted_label` vs `true_label`.
-- Iterates through all subjects for a given pair and prints a summary table.
-
+Reads all `explanation_trial_*.pkl` files in a subject directory and computes **Cohen's Kappa** from saved `predicted_label` vs `true_label`. Prints a summary table per subject.
 ```bash
 python3 calculate_kappa_from_explanations.py
 ```
@@ -286,38 +243,52 @@ python3 calculate_kappa_from_explanations.py
 ## 4. Full Pipeline Walkthrough
 
 ```
-Step 1 — Preprocessing (MATLAB + Python)
-  Final_Pipeline/1.data_filter.py    →  Filtered/filtered_data_subA0{i}T.mat
-  Final_Pipeline/2.ICA.m             →  filtered_Artifacts_removed/  (ICA-cleaned)
+Step 1 — (Optional) GDF → MAT conversion reference
+  Final_Pipeline/1.data_filter.py    →  (reference only, output not used by GNN)
 
-Step 2 — Training
+Step 2 — Training  [loads from BCI_Kaggle/ with internal 8-30Hz bandpass]
   experiment_with_logging.py         →  binary_label_{c1}_vs_{c2}/subject_{N}/model.pth
-  (LOSO cross-validation, all 6 class pairs)
+  (runs LOSO for all 6 class pairs)
 
 Step 3 — Feature Extraction
   extract_all_features.py            →  binary_{c1}_vs_{c2}_feature/{layer}/class{c}_correct.npy
                                         binary_{c1}_vs_{c2}_feature/class{c}_avg_edges.npy
 
 Step 4 — Statistical Analysis
-  perform_stats_all_pairs.py         →  p_values.npy, wilcoxon_p_values.npy, mean_diff.npy, etc.
+  perform_stats_all_pairs.py         →  p_values.npy, wilcoxon_p_values.npy, mean_diff.npy, …
 
 Step 5 — Visualization
   plot_feature_topomaps.py           →  Average connectivity PNG per class
   plot_significant_topomaps.py       →  Significance-filtered PNG + Difference PNG
+  save_explanations.py + visualize_from_pickle.py  →  GNNExplainer topoplots
+```
+
+### Data loading inside the GNN
+
+```
+BCI_Kaggle/A0{i}T.mat  (BCI Competition IV 2a, standard .mat format)
+      ↓
+load_BCI2a_data()       (inside experiment_with_logging.py)
+  - selects 22 EEG channels (drops EOG)
+  - windows to 2–6 s post-cue
+      ↓
+bandpass_filter(8–30 Hz)  (4th-order Butterworth, applied internally)
+      ↓
+CSP (16 components)  +  Spectral Coherence (231 channel pairs)
+      ↓
+EEGGraphDataset  →  GraphTransformerNet
 ```
 
 ---
 
 ## 5. Model Architecture
 
-The `GraphTransformerNet` (defined in `experiment_with_logging.py`) processes each EEG trial as a graph.
-
 ### Input Graph (per trial)
 | Tensor | Shape | Description |
 |---|---|---|
-| `x` | `(22, 16)` | CSP features — same 16-D vector broadcast to all 22 electrode nodes |
+| `x` | `(22, 16)` | 16 CSP features broadcast to all 22 electrode nodes |
 | `edge_index` | `(2, 231)` | Fully-connected graph — all unique pairs of 22 nodes |
-| `edge_attr` | `(231,)` | Spectral coherence per channel pair |
+| `edge_attr` | `(231,)` | Spectral coherence weight per channel pair |
 
 ### Architecture
 ```
@@ -327,7 +298,7 @@ Input (22 nodes × 16 features)
 GraphConvBlock   ChebConvBlock   SAGEConvBlock
   (3 GraphConv)  (3 ChebConv,K=3) (3 SAGEConv)
   16→32→32→16   16→32→32→16     16→32→32→16
-  LayerNorm+ReLU at each layer
+  LayerNorm + ReLU at each layer
         │               │              │
   GlobalMeanPool   GlobalMeanPool  GlobalMeanPool
    (batch, 16)      (batch, 16)    (batch, 16)
@@ -335,9 +306,6 @@ GraphConvBlock   ChebConvBlock   SAGEConvBlock
         └───────────────┴──────────────┘
                    Concatenate
                   (batch, 48)
-                       │
-             Unsqueeze seq dim
-             (batch, 1, 48)
                        │
           TransformerEncoder (8 heads, 3 layers)
                        │
@@ -351,7 +319,7 @@ GraphConvBlock   ChebConvBlock   SAGEConvBlock
                   Binary Logit
 ```
 
-**Training hyperparameters**: Adam (lr=1e-5, weight_decay=5e-4), BCEWithLogitsLoss, batch=16, max 200 epochs, early stopping patience=30.
+**Training**: Adam (lr=1e-5, weight_decay=5e-4), BCEWithLogitsLoss, batch=16, max 200 epochs, early stopping patience=30.
 
 ---
 
@@ -359,46 +327,44 @@ GraphConvBlock   ChebConvBlock   SAGEConvBlock
 
 | Array | Shape | Description |
 |---|---|---|
-| Raw EEG | `(N_trials, 22, 1000)` | 22 channels, 4 s at 250 Hz |
+| Raw EEG | `(N_trials, 22, 1000)` | 22 channels, 4 s @ 250 Hz |
 | CSP features | `(N_trials, 16)` | After `CSP.transform()` |
 | Node features (input) | `(22, 16)` | CSP vector repeated per node |
 | Spectral coherence | `(N_trials, 231)` | One scalar per channel pair |
-| Node features (extracted) | `(22, 16, N_trials)` | From `class{c}_correct.npy` |
-| Edge weights (avg) | `(231,)` | From `class{c}_avg_edges.npy` |
+| Node features (saved) | `(22, 16, N_trials)` | From `class{c}_correct.npy` |
+| Edge weights (saved) | `(231,)` | From `class{c}_avg_edges.npy` |
 | P-value matrix | `(22, 16)` | Node × Feature statistics |
-| Global p-values | `(16,)` | Feature-level statistics (node-averaged) |
+| Global p-values | `(16,)` | Feature-level stats (node-averaged) |
 
 ---
 
 ## 7. Statistical Analysis
 
-For each class pair and GNN layer, `perform_stats_all_pairs.py` compares the feature distribution of correctly classified **Class 1** vs **Class 2** trials:
+Both tests are run at two levels:
 
-- **Welch's T-test** (`scipy.stats.ttest_ind`, `equal_var=False`): Tests if the means differ, accounting for unequal variance.
-- **Wilcoxon Rank-Sum** (`scipy.stats.ranksums`): Non-parametric test, robust to non-normality. The sign of the z-statistic indicates direction (`C0 > C1` or `C1 > C0`).
+- **Welch's T-test** (`equal_var=False`): Tests if means of Class 1 vs Class 2 differ, robust to unequal variance.
+- **Wilcoxon Rank-Sum**: Non-parametric alternative. The sign of the z-statistic indicates direction (`z > 0` → Class 0 higher).
 
-Both tests are run at two granularities:
-- **Node-wise** `(22 × 16)`: Which specific electrode × CSP component pairs are discriminative?
-- **Global** `(16,)`: Averaged across all electrodes — which CSP components are globally significant?
+| Level | Shape | Purpose |
+|---|---|---|
+| Node-wise | (22, 16) | Which electrode × CSP component pairs are discriminative? |
+| Global | (16,) | Which CSP components are significant across all electrodes? |
 
 ---
 
 ## 8. Visualization Guide
 
-### Plot Types
-
-| Script | Type | Node Value | Edge Value | Colormap |
+| Script | Plot type | Node value | Edge value | Colormap |
 |---|---|---|---|---|
-| `plot_feature_topomaps.py` | Average Activation | Mean feature across trials | Mean spectral coherence | `Reds` / `plasma` |
-| `plot_significant_topomaps.py` | Significant Connectivity | Top-10 significant nodes only | Edges between Top-10 pairs only | `Reds` / `plasma` |
-| `plot_significant_topomaps.py` | Difference Map | C1 − C2 (masked to Top-10) | Coherence C1 − C2 (masked) | `RdBu_r` (diverging) |
+| `plot_feature_topomaps.py` | Average activation | Mean feature across trials | Mean spectral coherence | `Reds` / `plasma` |
+| `plot_significant_topomaps.py` | Significant connectivity | Top-10 nodes by p-value | Edges within Top-10 set only | `Reds` / `plasma` |
+| `plot_significant_topomaps.py` | Difference map | C1 − C2 (Top-10 masked) | Coherence C1 − C2 (masked) | `RdBu_r` (diverging) |
 
-### Thresholding Logic
-
-1. **Node filtering**: Sort all 22 nodes by their Wilcoxon p-value for the selected feature. Keep only the **Top 10** (lowest p-values).
-2. **Edge filtering**: An edge is plotted only if **both** of its endpoint nodes are in the Top-10 significant set.
-3. **Visual encoding**: Node size ∝ feature magnitude; edge width and color ∝ weight magnitude.
-4. **Global color scaling**: The color axis is computed globally across both classes to allow direct visual comparison.
+### Thresholding logic
+1. Sort all 22 nodes by Wilcoxon p-value for the chosen feature. Keep **Top 10** (lowest p).
+2. An edge is drawn only if **both** endpoint nodes are in the Top-10 set.
+3. Node size ∝ feature magnitude; edge width and color ∝ weight magnitude.
+4. Color axis is computed globally across both classes for direct comparison.
 
 ---
 
@@ -416,44 +382,41 @@ matplotlib
 tqdm
 ```
 
-Install:
 ```bash
 pip install torch torch-geometric numpy scipy scikit-learn mne matplotlib tqdm
 ```
-
-MATLAB with EEGLAB is required only for `Final_Pipeline/2.ICA.m`.
 
 ---
 
 ## 10. Quick-Start Commands
 
 ```bash
-# 1. Preprocess (run once — requires GDF files and EEGLAB)
-python3 Final_Pipeline/1.data_filter.py
-# Then run 2.ICA.m in MATLAB
-
-# 2. Train all pairs (LOSO, ~hours depending on hardware)
+# 1. Train all pairs (LOSO — repeat for all 6 pairs)
 python3 experiment_with_logging.py --c1 0 --c2 1
 python3 experiment_with_logging.py --c1 0 --c2 2
-# ... repeat for all 6 pairs
+# ... (0v3, 1v2, 1v3, 2v3)
 
-# 3. Extract features for all pairs at once
+# 2. Extract features for all pairs at once
 python3 extract_all_features.py
 
-# 4. Run statistical analysis
+# 3. Run statistical analysis
 python3 perform_stats_all_pairs.py
 
-# 5. View significance summary
+# 4. View significance summary
 python3 report_significant_features.py
 
-# 6. Inspect a specific pair/layer interactively
+# 5. Inspect a specific pair/layer interactively
 python3 analyze_wilcoxon.py --c1 0 --c2 1 --layer cheb --simple
 
-# 7. Generate topoplots (example: pair 0v1, ChebConv, feature 11)
+# 6. Generate topoplots (example: pair 0v1, ChebConv, feature 11)
 python3 plot_feature_topomaps.py --c1 0 --c2 1 --layer cheb --feature_idx 11
 python3 plot_significant_topomaps.py --c1 0 --c2 1 --layer cheb --feature_idx 11
 
-# 8. Inspect any saved .npy file
+# 7. Run GNNExplainer and visualize
+python3 save_explanations.py --all_trials --output_dir explanation_data
+python3 visualize_from_pickle.py explanation_data/explanation_trial_0.pkl
+
+# 8. Inspect any .npy file
 python3 inspect_npy.py binary_0_vs_1_feature/cheb/p_values.npy
 ```
 
@@ -461,21 +424,21 @@ python3 inspect_npy.py binary_0_vs_1_feature/cheb/p_values.npy
 
 ## Class Label Reference
 
-| Integer Label | Motor Imagery Task |
+| Label | Motor Imagery Task |
 |---|---|
 | 0 | Left Hand |
 | 1 | Right Hand |
 | 2 | Both Feet |
 | 3 | Tongue |
 
-**Pair naming**: `binary_{c1}_vs_{c2}_feature/` e.g., `binary_0_vs_1_feature/` = Left Hand vs Right Hand.
+**Pair naming**: `binary_{c1}_vs_{c2}_feature/` — e.g., `binary_0_vs_1_feature/` = Left Hand vs Right Hand.
 
 ## Channel Order (22 electrodes)
 
 ```
-Index: 0    1    2    3    4    5    6   7   8   9   10  11  12
-Name:  Fz  FC3  FC1  FCz  FC2  FC4  C5  C3  C1  Cz  C2  C4  C6
+Index:  0    1    2    3    4    5    6   7   8    9   10  11  12
+Name:  Fz  FC3  FC1  FCz  FC2  FC4  C5  C3  C1   Cz  C2  C4  C6
 
 Index: 13   14   15   16   17  18  19  20  21
-Name:  CP3  CP1  CPz  CP2  CP4  P1  Pz  P2  POz
+Name: CP3  CP1  CPz  CP2  CP4  P1  Pz  P2  POz
 ```
